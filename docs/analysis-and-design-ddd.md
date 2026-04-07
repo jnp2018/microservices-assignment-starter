@@ -1,7 +1,5 @@
 # Analysis and Design — Domain-Driven Design Approach
 
-> **Alternative to**: [`analysis-and-design.md`](analysis-and-design.md) (SOA/Erl approach).
-> Choose **one** approach, not both. Use this if your team prefers discovering service boundaries through domain events rather than process decomposition.
 
 **References:**
 1. *Domain-Driven Design: Tackling Complexity in the Heart of Software* — Eric Evans
@@ -16,31 +14,28 @@
 
 Describe or diagram the high-level Business Process to be automated.
 
-- **Domain**: *(fill in)*
-- **Business Process**: *(fill in)*
-- **Actors**: *(fill in)*
-- **Scope**: *(fill in)*
+- **Domain**: E-learning & Education Technology.
+- **Business Process**: Online course enrollment and automated notification system.
+- **Actors**: Student, Administrator, System.
+- **Scope**: User authentication, Profile management, Course CRUD, Order placement, Payment processing, and Notification delivery.
 
 **Process Diagram:**
 
 *(Insert BPMN, flowchart, or image into `docs/asset/` and reference here)*
 
 ### 1.2 Existing Automation Systems
-
 | System Name | Type | Current Role | Interaction Method |
 |-------------|------|--------------|-------------------|
-|             |      |              |                   |
-
-> If none exist, state: *"None — the process is currently performed manually."*
+| None | N/A | The process is currently performed manually. | N/A |
 
 ### 1.3 Non-Functional Requirements
 
-| Requirement    | Description |
+| Requirement | Description |
 |----------------|-------------|
-| Performance    |             |
-| Security       |             |
-| Scalability    |             |
-| Availability   |             |
+| Performance | Average response time < 500ms for internal service calls. |
+| Security | Stateless authentication using JWT; Role-based access control (RBAC). |
+| Scalability | Granular scaling of Course and Order services during high-traffic sales. |
+| Availability | High availability using Eureka Service Discovery and Resilience4j. |
 
 ---
 
@@ -103,8 +98,14 @@ graph LR
 
 Service Contract specification for each Bounded Context / service.
 Full OpenAPI specs:
-- [`docs/api-specs/service-a.yaml`](api-specs/service-a.yaml)
-- [`docs/api-specs/service-b.yaml`](api-specs/service-b.yaml)
+- [`docs/api-specs/user-service.yaml`](docs/api-specs/user-service.yaml)
+- [`docs/api-specs/profile-service.yaml`](docs/api-specs/profile-service.yaml)
+- [`docs/api-specs/course-service.yaml`](docs/api-specs/course-service.yaml)
+- [`docs/api-specs/order-service.yaml`](docs/api-specs/order-service.yaml)
+- [`docs/api-specs/payment-service.yaml`](docs/api-specs/payment-service.yaml)
+- [`docs/api-specs/notification-service.yaml`](docs/api-specs/notification-service.yaml)
+
+**Base URL**: `http://localhost:8000/api/v1`
 
 **Service A:**
 
