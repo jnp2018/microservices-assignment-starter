@@ -1,0 +1,66 @@
+spring:
+  application:
+    name: profile-service
+  output:
+    ansi:
+      enabled: ALWAYS
+  datasource:
+    url: jdbc:mysql://localhost:3306/profile?useSSL=false&serverTimezone=UTC
+    # khi docker sửa thành jdbc:mysql://db:3306/profile?useSSL=false&serverTimezone=UTC
+    username: root
+    password: '1234'
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+      naming:
+        physical-strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
+    show-sql: true
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+
+server:
+  port: 8082
+  # servlet:
+  #   context-path: /profile
+
+feign:
+  client:
+    config:
+      default:
+        loggerLevel: full
+        configuration: com.example.profile_service.config.FeignConfig
+eureka:
+  client:
+    enabled: true # sua thanh true khi su dung
+    serviceUrl:
+      defaultZone: http://localhost:8761/eureka/ 
+      # khi docker sửa thành http://eureka-server:8761/eureka/
+  instance:
+    instance-id: ${spring.application.name}:${server.port}:${random.value}
+    hostname: profile-service
+    prefer-ip-address: true 
+    # khi docker sưa thanh false
+
+logging:
+  pattern:
+    console: "%clr(%d{HH:mm:ss}){faint} %clr(%5p) %clr(---){faint} %clr([%15.15t]){faint} %clr(%-40.40logger{39}){cyan} %clr(:){faint} %m%n"
+  level:
+    root: INFO
+
+jwt:
+  signer: "dGhpcyBpcyBhIHZlcnkgc2VjdXJlIGtleSBmb3IgSldUIGVuY29kaW5n"
+
+app:
+  service:
+    user: "http://user-service"
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info
+  endpoint:
+    health:
+      show-details: always

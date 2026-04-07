@@ -1,0 +1,90 @@
+# đặt cổng gateway là 8000. dùng spring cloud gateway
+# sau này khi khởi động gateway k cần biết các service ở ip nào mà chỉ cần truy cập vào port 8000 còn api sẽ route
+server:
+  port: 8000
+
+# định nghĩa tiền tố cho các api
+app:
+  api:
+    prefix: /api/v1
+    strip: 2
+
+spring:
+  application:
+    name: api-gateway
+  output:
+    ansi:
+      enabled: ALWAYS
+# sử dụng cloud gatewayy
+  cloud:
+    gateway:
+      routes:
+        - id: user-actuator
+          uri: lb://user-service
+          predicates:
+            - Path=/api/v1/user/actuator/**
+          filters:
+            - StripPrefix=3
+        # Route đến user service
+        - id: user-service
+        # route đến giá trị uri
+          # uri: http://localhost:8081 (dùng khi gatewway fix cứng không có eureka)
+          uri: lb://user-service
+          # các api được phép route đến. không khai báo api có dạng /api/v1/internal để tránh việc có thể truy cập
+          # ip nội bộ thông qua gateway (có ip service thì vẫn truy cập dc internal)
+          predicates:
+            - Path=${app.api.prefix}/user/**, ${app.api.prefix}/auth/**
+          # filters để biết bỏ qua bao nhiêu tiền tố, ở đây là 2 nên bỏ qua /api/v1
+          filters:
+            - StripPrefix=${app.api.strip}
+          #   - RewritePath=/user/(?<remaining>.*), /$\{remaining}
+          #   - name: CircuitBreaker
+          #     args:
+          #       name: userservicebreaker
+          #       fallbackUri: forward:/fallback/user-service
+
+      # Default filters for all routes
+      # default-filters:
+      #   - DedupeResponseHeader=Access-Control-Allow-Origin Access-Control-Allow-Credentials
+
+        # route đến profile service
+        - id: profile-actuator
+          uri: lb://profile-service
+          predicates:
+            - Path=/api/v1/profile/actuator/**
+          filters:
+            - StripPrefix=3
+
+        - id: profile-service
+          uri: lb://profile-service # tên profile-serivce phải trùng với spring.application.name ở file yaml của profile service
+          predicates:
+            - Path=${app.api.prefix}/profile/**
+          filters:
+            - StripPrefix=${app.api.strip}
+          
+
+eureka:
+  client:
+    enabled: true
+    serviceUrl:
+      defaultZone: http://localhost:8761/eureka/
+      # defaultZone: http://eureka-server:8761/eureka/
+  instance:
+    hostname: api-gateway
+    prefer-ip-address: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,routes,gateway
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  pattern:
+    console: "%clr(%d{HH:mm:ss}){faint} %clr(%5p) %clr(---){faint} %clr([%15.15t]){faint} %clr(%-40.40logger{39}){cyan} %clr(:){faint} %m%n"
+  level:
+    root: INFO
+    org.springframework.cloud.gateway: DEBUG

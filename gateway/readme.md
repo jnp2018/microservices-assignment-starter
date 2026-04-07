@@ -2,43 +2,67 @@
 
 ## Overview
 
-The API Gateway serves as the single entry point for all client requests. It routes incoming requests to the appropriate backend microservice.
+Spring Cloud Gateway - The single entry point for all client requests. It routes incoming requests to the appropriate backend microservice using service discovery (Eureka).
 
-## Responsibilities
+## Features
 
-- **Request routing**: Forward requests to the correct service
-- **Load balancing**: Distribute traffic (if applicable)
-- **Authentication**: Validate tokens/credentials (optional)
-- **Rate limiting**: Protect services from overload (optional)
-- **CORS handling**: Allow frontend cross-origin requests
-- **Request/Response transformation**: Modify headers, paths as needed
+- **Service Discovery**: Automatic service discovery via Eureka  
+- **Request Routing**: Routes requests based on predicates (Path patterns)
+- **Load Balancing**: Built-in client-side load balancing (`lb://` prefix)
+- **Path Rewriting**: Transforms request paths before forwarding
+- **Circuit Breaker**: Graceful failure handling with fallbacks
+- **CORS**: Handled transparently
 
 ## Tech Stack
 
-| Component  | Choice             |
-|------------|--------------------|
-| Approach   | *(e.g., Nginx, Express, FastAPI, Kong, Traefik)* |
+- **Framework**: Spring Cloud Gateway
+- **Service Discovery**: Eureka Client
+- **Port**: 8000
 
 ## Routing Table
 
-| External Path        | Target Service | Internal URL                   |
-|----------------------|----------------|--------------------------------|
-| `/api/service-a/*`   | Service A      | `http://service-a:5000/*`      |
-| `/api/service-b/*`   | Service B      | `http://service-b:5000/*`      |
+| External Path           | Target Service | Rewrite Path        | Notes                    |
+|-------------------------|-----------------|---------------------|--------------------------|
+| `/user/**`              | user-service    | `/...` (remove prefix) | User authentication & info |
 
 ## Running
 
 ```bash
 # From project root
-docker compose up gateway --build
+docker compose up --build
 ```
+
+## Routing Examples
+
+```bash
+# Call user login via gateway
+curl -X POST http://localhost:8000/user/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"user1","password":"1234"}'
+
+# Get user info via gateway  
+curl -X GET http://localhost:8000/user/myInfo \
+  -H "Authorization: Bearer <token>"
+
+# Alternative: Call service directly (without gateway)
+curl -X GET http://localhost:8080/user/myInfo
+```
+
+## Service Discovery
+
+Services must register with Eureka. Check dashboard:
+- **Eureka**: http://localhost:8761/
+
+## Monitoring
+
+- **Health**: http://localhost:8000/actuator/health
+- **Routes**: http://localhost:8000/actuator/gateway/routes
+- **Request logs**: Check console logs with DEBUG level
 
 ## Configuration
 
-The gateway uses Docker Compose networking. Services are accessible by their
-service names defined in `docker-compose.yml` (e.g., `service-a`, `service-b`).
-
-## Notes
-
-- Use service names (not `localhost`) for upstream URLs inside Docker
-- The gateway exposes port 8080 to the host
+Edit `src/main/resources/application.yaml` to:
+- Add/modify routes
+- Change port
+- Configure Eureka connection
+- Set circuit breaker policies
