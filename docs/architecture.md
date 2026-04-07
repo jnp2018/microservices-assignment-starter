@@ -12,33 +12,34 @@
 
 ## 1. Pattern Selection
 
-Select patterns based on business/technical justifications from your analysis.
+Selected patterns based on the technical requirements of a distributed EdTech system.
 
 | Pattern | Selected? | Business/Technical Justification |
 |---------|-----------|----------------------------------|
-| API Gateway | | |
-| Database per Service | | |
-| Shared Database | | |
-| Saga | | |
-| Event-driven / Message Queue | | |
-| CQRS | | |
-| Circuit Breaker | | |
-| Service Registry / Discovery | | |
-| Other: ___ | | |
-
-> Reference: *Microservices Patterns* — Chris Richardson, chapters on decomposition, data management, and communication patterns.
+| **API Gateway** | **Yes** | Centralized entry point for Authentication (JWT) and routing requests to internal services. |
+| **Database per Service** | **Yes** | Ensures loose coupling; each service (User, Course, Order) owns its data and schema. |
+| **Saga (Choreography)** | **Yes** | Handles distributed transactions for the Order-Payment-Stock flow using compensating updates. |
+| **Event-driven (Kafka)** | **Yes** | Asynchronous communication for Notification service to ensure non-blocking performance. |
+| **Circuit Breaker** | **Yes** | Implemented via **Resilience4j** to prevent cascading failures when a service (e.g., Payment) is down. |
+| **Service Discovery** | **Yes** | **Netflix Eureka** allows services to find each other dynamically without hardcoded IPs. |
+| **Externalized Config** | **Yes** | **Spring Cloud Config** for centralized management of environment variables across 6+ services. |
 
 ---
 
 ## 2. System Components
 
-| Component     | Responsibility | Tech Stack      | Port  |
+| Component | Responsibility | Tech Stack | Port |
 |---------------|----------------|-----------------|-------|
-| **Frontend**  |                | *(your choice)* | 3000  |
-| **Gateway**   |                | *(your choice)* | 8080  |
-| **Service A** |                | *(your choice)* | 5001  |
-| **Service B** |                | *(your choice)* | 5002  |
-| **Database**  |                | *(your choice)* | 5432  |
+| **Frontend** | User Interface | ReactJS | 3000 |
+| **Gateway** | Routing & JWT Auth | Spring Cloud Gateway | 8000 |
+| **Eureka Server**| Service Discovery | Netflix Eureka | 8761 |
+| **Config Server**| Centralized Config | Spring Cloud Config | 8888 |
+| **User Service** | Auth & Identity | Spring Boot, MySQL | 8081 |
+| **Profile Service**| User Metadata | Spring Boot, MySQL | 8082 |
+| **Course Service** | Inventory & Catalog| Spring Boot, MySQL | 8083 |
+| **Order Service** | Orchestration | Spring Boot, MySQL | 8084 |
+| **Payment Service**| Transactions | Spring Boot, MySQL | 8085 |
+| **Noti Service** | Async Messaging | Spring Boot, Kafka | 8086 |
 
 ---
 
@@ -46,27 +47,48 @@ Select patterns based on business/technical justifications from your analysis.
 
 ### Inter-service Communication Matrix
 
-| From → To     | Service A | Service B | Gateway | Database |
-|---------------|-----------|-----------|---------|----------|
-| **Frontend**  |           |           |         |          |
-| **Gateway**   |           |           |         |          |
-| **Service A** |           |           |         |          |
-| **Service B** |           |           |         |          |
+| From → To | Gateway | User Svc | Course Svc | Order Svc | Payment Svc | Noti Svc |
+|-----------|---------|----------|------------|-----------|-------------|----------|
+| **Frontend** | REST (JWT) | - | - | - | - | - |
+| **Gateway** | - | REST | REST | REST | - | - |
+| **User Svc** | - | - | - | - | - | - |
+| **Order Svc** | - | Feign (Verify)| Feign (Stock)| - | Feign (Pay) | Kafka (Event)|
+| **Payment Svc**| - | - | - | - | - | - |
 
 ---
 
 ## 4. Architecture Diagram
 
-> Place diagrams in `docs/asset/` and reference here.
+The system follows a decentralized microservices architecture with a shared Message Broker (Kafka) for asynchronous tasks.
 
 ```mermaid
-graph LR
-    U[User] --> FE[Frontend]
-    FE --> GW[API Gateway]
-    GW --> SA[Service A]
-    GW --> SB[Service B]
-    SA --> DB1[(Database A)]
-    SB --> DB2[(Database B)]
+graph TD
+    User[Web Client] -->|HTTPS| GW[API Gateway :8000]
+    
+    subgraph Service_Discovery
+        EU[Eureka Server :8761]
+    end
+
+    subgraph Core_Services
+        GW -->|REST/Auth| US[User Service]
+        GW -->|REST| PS[Profile Service]
+        GW -->|REST| CS[Course Service]
+        GW -->|REST| OS[Order Service]
+    end
+
+    subgraph Data_Consistency
+        OS -->|Feign| CS
+        OS -->|Feign| PYS[Payment Service]
+        OS -.->|Async Event| KF((Kafka Broker))
+        KF -.->|Consume| NS[Notification Service]
+    end
+
+    US --- EU
+    PS --- EU
+    CS --- EU
+    OS --- EU
+    PYS --- EU
+    NS --- EU
 ```
 
 ---

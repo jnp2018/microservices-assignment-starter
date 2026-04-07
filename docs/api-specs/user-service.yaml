@@ -1,0 +1,267 @@
+# ============================================
+# User Service — OpenAPI 3.0 Specification
+# ============================================
+openapi: 3.0.3
+info:
+  title: User Service API
+  description: |
+    API specification for Identity and User Management Service.
+    Includes Authentication (JWT), User Registration, and Internal existence checks.
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:8081
+    description: User Service Port
+  - url: http://localhost:8000/api/v1
+    description: API Gateway Entry
+
+paths:
+  # Actuator Health Check
+  /actuator/health:
+    get:
+      summary: Health check (Actuator)
+      operationId: healthCheck
+      tags:
+        - System
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: UP
+
+  # Auth Controller Endpoints
+  /auth/login:
+    post:
+      summary: User authentication
+      tags:
+        - Authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthRequest'
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIResponseAuthResponse'
+        '401':
+          description: Unauthorized
+
+  /auth/logout:
+    post:
+      summary: User logout
+      tags:
+        - Authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LogoutRequest'
+      responses:
+        '200':
+          description: Logout successful
+
+  /auth/introspect:
+    post:
+      summary: Token introspection
+      tags:
+        - Authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IntrospectRequest'
+      responses:
+        '200':
+          description: Token status returned
+
+  # User Controller Endpoints
+  /user/register:
+    post:
+      summary: Register new user
+      tags:
+        - User Management
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: User created
+        '400':
+          description: Validation error
+
+  /user/myInfo:
+    get:
+      summary: Get current authenticated user info
+      tags:
+        - User Management
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIResponseUserResponse'
+
+  /user/{userId}:
+    get:
+      summary: Get user by ID
+      tags:
+        - User Management
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Success
+        '404':
+          description: User not found
+
+    put:
+      summary: Update user
+      tags:
+        - User Management
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdateRequest'
+      responses:
+        '200':
+          description: Updated
+
+  # Internal Controller Endpoints
+  /internal/user/exists/{userId}:
+    get:
+      summary: Check if user exists (Internal use)
+      tags:
+        - Internal
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Returns boolean
+          content:
+            application/json:
+              schema:
+                type: boolean
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    AuthRequest:
+      type: object
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+
+    AuthResponse:
+      type: object
+      properties:
+        token:
+          type: string
+        authenticated:
+          type: boolean
+
+    RegisterRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+        email:
+          type: string
+
+    UserUpdateRequest:
+      type: object
+      properties:
+        password:
+          type: string
+        email:
+          type: string
+
+    UserResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        username:
+          type: string
+        email:
+          type: string
+
+    LogoutRequest:
+      type: object
+      properties:
+        token:
+          type: string
+
+    IntrospectRequest:
+      type: object
+      properties:
+        token:
+          type: string
+
+    APIResponseAuthResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        data:
+          $ref: '#/components/schemas/AuthResponse'
+
+    APIResponseUserResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        data:
+          $ref: '#/components/schemas/UserResponse'

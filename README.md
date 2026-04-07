@@ -86,7 +86,7 @@ graph LR
 | **Payment Service** |Manage user payment information and payment history|SpringBoot, Spring Security, OpenFeign for sync messaging, Resilence4j| 8085 |
 | **Notification Service** |Notification when buy course success|SpringBoot, Spring Security, Kafka for event and async messaging, Resilence4j| 8086 |
 
-> Full documentation: [`docs/architecture.md`](docs/architecture.md) · [`docs/analysis-and-design.md`](docs/analysis-and-design.md)
+> Full documentation: [`docs/architecture.md`](docs/architecture.md) · [`docs/analysis-and-design-ddd.md`](docs/analysis-and-design-ddd.md)
 
 ---
 
