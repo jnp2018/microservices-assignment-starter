@@ -82,3 +82,4 @@ This project uses the [MIT License](LICENSE).
 
 > Template by [Hung Dang](https://github.com/hungdn1701) · [Template guide](GETTING_STARTED.md)
 
+## Nguyen Viet Hoang Hai , Pham Minh Duc
