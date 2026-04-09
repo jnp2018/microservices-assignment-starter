@@ -1,80 +1,585 @@
 # ============================================
-# Service A — OpenAPI 3.0 Specification
+# Service A — Order Application (Order Orchestration)
+# Domain: Thương mại điện tử thời trang
+# Responsibility: Điều phối quy trình Đặt hàng quần áo (Saga Orchestrator)
+#                 Quản lý Đơn hàng, Giỏ hàng, Tồn kho, Catalog, Pricing
 # Docs: https://swagger.io/specification/
 # ============================================
 openapi: 3.0.3
 info:
-  title: Service A API
+  title: Service A — Order Application API
   description: |
-    API specification for Service A.
-    Replace with your actual service name and description.
+    API của Service A trong hệ thống thương mại điện tử thời trang.
+    Service A đóng vai trò **Saga Orchestrator** điều phối toàn bộ quy trình đặt hàng:
+    1. Lấy giỏ hàng và xác minh sản phẩm (Cart + Catalog + Pricing bên trong)
+    2. Giữ tồn kho (Inventory)
+    3. Tạo đơn hàng
+    4. Gọi Service B để tạo phiên thanh toán
+    5. Cập nhật trạng thái đơn hàng theo kết quả thanh toán
+    6. Rollback tồn kho nếu thanh toán thất bại
   version: 1.0.0
+  contact:
+    name: Fashion E-Commerce Team
 
 servers:
   - url: http://localhost:5001
-    description: Local development
+    description: Local development (direct)
+  - url: http://localhost:8080
+    description: Local development (via API Gateway)
+
+tags:
+  - name: Health
+    description: Kiểm tra trạng thái service
+  - name: Orders
+    description: Quản lý và đặt đơn hàng
+  - name: Cart
+    description: Quản lý giỏ hàng
+  - name: Catalog
+    description: Thông tin sản phẩm và biến thể
+  - name: Inventory
+    description: Quản lý tồn kho
 
 paths:
   /health:
     get:
+      tags: [Health]
       summary: Health check
       operationId: healthCheck
       responses:
         '200':
-          description: Service is healthy
+          description: Service đang hoạt động bình thường
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: ok
+
+  # ── ORDERS ──────────────────────────────────────────────────────────────────
+  /orders/place:
+    post:
+      tags: [Orders]
+      summary: Đặt hàng (khởi động Saga Orchestration)
+      description: |
+        Thực hiện toàn bộ luồng đặt hàng theo thứ tự:
+        1. Xác minh sản phẩm & tính tiền
+        2. Giữ tồn kho
+        3. Tạo đơn hàng (trạng thái: `PENDING_PAYMENT`)
+        4. Gọi Service B tạo phiên thanh toán
+        5. Nhận kết quả → cập nhật đơn hoặc rollback
+      operationId: placeOrder
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaceOrderRequest'
+            example:
+              customerId: "cust-001"
+              cartId: "cart-abc-123"
+              shippingAddress:
+                fullName: "Nguyễn Văn A"
+                phone: "0912345678"
+                street: "123 Nguyễn Trãi"
+                district: "Thanh Xuân"
+                city: "Hà Nội"
+              paymentMethod: "CREDIT_CARD"
+              note: "Giao giờ hành chính"
+      responses:
+        '201':
+          description: Đặt hàng thành công — đơn đã thanh toán và yêu cầu giao hàng được tạo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaceOrderResponse'
+        '400':
+          description: Dữ liệu đầu vào không hợp lệ (giỏ hàng trống, thiếu địa chỉ...)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "INVALID_INPUT"
+                message: "Cart is empty or shipping address is missing"
+        '401':
+          description: Chưa xác thực (token không hợp lệ hoặc thiếu)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Xung đột — hết tồn kho hoặc đơn trùng
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "INVENTORY_INSUFFICIENT"
+                message: "Không đủ tồn kho cho sản phẩm SKU-SHIRT-001-L-RED"
+        '422':
+          description: Thanh toán thất bại — đơn đã bị hủy và tồn kho đã hoàn trả
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "PAYMENT_FAILED"
+                message: "Payment session failed. Order cancelled and inventory released."
+        '500':
+          description: Lỗi hệ thống nội bộ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /orders/{orderId}:
+    get:
+      tags: [Orders]
+      summary: Lấy chi tiết đơn hàng
+      operationId: getOrderById
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          example: "ord-uuid-0001"
+      responses:
+        '200':
+          description: Thông tin chi tiết đơn hàng
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          description: Chưa xác thực
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Không tìm thấy đơn hàng
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "ORDER_NOT_FOUND"
+                message: "Order ord-uuid-0001 not found"
+
+  /orders/{orderId}/cancel:
+    post:
+      tags: [Orders]
+      summary: Hủy đơn hàng
+      description: Chỉ hủy được đơn đang ở trạng thái `PENDING_PAYMENT`. Tồn kho sẽ được hoàn trả.
+      operationId: cancelOrder
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  example: "Khách hàng đổi ý"
+      responses:
+        '200':
+          description: Hủy đơn thành công
           content:
             application/json:
               schema:
                 type: object
                 properties:
+                  orderId:
+                    type: string
                   status:
                     type: string
-                    example: ok
+                    example: CANCELLED
+                  message:
+                    type: string
+                    example: "Order cancelled and inventory released"
+        '400':
+          description: Không thể hủy — đơn đã thanh toán hoặc đang giao
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Không tìm thấy đơn
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Trạng thái đơn không cho phép hủy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
-  # Add your endpoints below
-  # /items:
-  #   get:
-  #     summary: List all items
-  #     operationId: listItems
-  #     responses:
-  #       '200':
-  #         description: A list of items
-  #         content:
-  #           application/json:
-  #             schema:
-  #               type: array
-  #               items:
-  #                 $ref: '#/components/schemas/Item'
-  #   post:
-  #     summary: Create a new item
-  #     operationId: createItem
-  #     requestBody:
-  #       required: true
-  #       content:
-  #         application/json:
-  #           schema:
-  #             $ref: '#/components/schemas/ItemCreate'
-  #     responses:
-  #       '201':
-  #         description: Item created
+  # ── CART ────────────────────────────────────────────────────────────────────
+  /cart/{customerId}:
+    get:
+      tags: [Cart]
+      summary: Lấy giỏ hàng của khách
+      operationId: getCart
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: customerId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Giỏ hàng hiện tại
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Cart'
+        '404':
+          description: Giỏ hàng trống hoặc không tìm thấy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
+    post:
+      tags: [Cart]
+      summary: Thêm sản phẩm vào giỏ hàng
+      operationId: addToCart
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: customerId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CartItem'
+            example:
+              sku: "SKU-SHIRT-001-L-RED"
+              quantity: 2
+      responses:
+        '200':
+          description: Thêm vào giỏ thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Cart'
+        '400':
+          description: SKU không hợp lệ hoặc số lượng <= 0
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ── CATALOG ─────────────────────────────────────────────────────────────────
+  /products:
+    get:
+      tags: [Catalog]
+      summary: Lấy danh sách sản phẩm
+      operationId: listProducts
+      parameters:
+        - name: category
+          in: query
+          schema:
+            type: string
+          example: "shirts"
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Danh sách sản phẩm
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Product'
+                  total:
+                    type: integer
+                  page:
+                    type: integer
+
+  /products/{sku}:
+    get:
+      tags: [Catalog]
+      summary: Lấy thông tin biến thể sản phẩm theo SKU
+      operationId: getProductBySku
+      parameters:
+        - name: sku
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "SKU-SHIRT-001-L-RED"
+      responses:
+        '200':
+          description: Thông tin biến thể sản phẩm
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductVariant'
+        '404':
+          description: Không tìm thấy SKU
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ── INVENTORY ────────────────────────────────────────────────────────────────
+  /inventory/{sku}:
+    get:
+      tags: [Inventory]
+      summary: Kiểm tra số lượng tồn kho theo SKU
+      operationId: checkInventory
+      parameters:
+        - name: sku
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Trạng thái tồn kho
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sku:
+                    type: string
+                  available:
+                    type: integer
+                    example: 42
+
+# ── COMPONENTS ─────────────────────────────────────────────────────────────────
 components:
-  schemas: {}
-    # Item:
-    #   type: object
-    #   properties:
-    #     id:
-    #       type: string
-    #       format: uuid
-    #     name:
-    #       type: string
-    #     createdAt:
-    #       type: string
-    #       format: date-time
-    # ItemCreate:
-    #   type: object
-    #   required:
-    #     - name
-    #   properties:
-    #     name:
-    #       type: string
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token lấy từ Auth module qua API Gateway
+
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+
+    ErrorResponse:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          example: "ORDER_NOT_FOUND"
+        message:
+          type: string
+          example: "Mô tả lỗi chi tiết"
+
+    ShippingAddress:
+      type: object
+      required: [fullName, phone, street, district, city]
+      properties:
+        fullName:
+          type: string
+        phone:
+          type: string
+        street:
+          type: string
+        district:
+          type: string
+        city:
+          type: string
+
+    PlaceOrderRequest:
+      type: object
+      required: [customerId, cartId, shippingAddress, paymentMethod]
+      properties:
+        customerId:
+          type: string
+        cartId:
+          type: string
+        shippingAddress:
+          $ref: '#/components/schemas/ShippingAddress'
+        paymentMethod:
+          type: string
+          enum: [CREDIT_CARD, DEBIT_CARD, E_WALLET, COD]
+        note:
+          type: string
+
+    PlaceOrderResponse:
+      type: object
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [PAID, PAYMENT_FAILED, CANCELLED]
+        totalAmount:
+          type: number
+          format: float
+        shipmentId:
+          type: string
+          format: uuid
+        message:
+          type: string
+          example: "Order placed successfully"
+
+    OrderLine:
+      type: object
+      properties:
+        sku:
+          type: string
+        productName:
+          type: string
+        size:
+          type: string
+        color:
+          type: string
+        quantity:
+          type: integer
+        unitPrice:
+          type: number
+
+    Order:
+      type: object
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        customerId:
+          type: string
+        status:
+          type: string
+          enum: [PENDING_PAYMENT, PAID, PAYMENT_FAILED, CANCELLED, SHIPPING]
+        orderLines:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderLine'
+        subtotal:
+          type: number
+        discount:
+          type: number
+        shippingFee:
+          type: number
+        totalAmount:
+          type: number
+        shippingAddress:
+          $ref: '#/components/schemas/ShippingAddress'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CartItem:
+      type: object
+      required: [sku, quantity]
+      properties:
+        sku:
+          type: string
+        quantity:
+          type: integer
+          minimum: 1
+
+    Cart:
+      type: object
+      properties:
+        cartId:
+          type: string
+        customerId:
+          type: string
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              sku:
+                type: string
+              productName:
+                type: string
+              size:
+                type: string
+              color:
+                type: string
+              quantity:
+                type: integer
+              unitPrice:
+                type: number
+        updatedAt:
+          type: string
+          format: date-time
+
+    Product:
+      type: object
+      properties:
+        productId:
+          type: string
+        name:
+          type: string
+        category:
+          type: string
+        basePrice:
+          type: number
+        variants:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProductVariant'
+
+    ProductVariant:
+      type: object
+      properties:
+        sku:
+          type: string
+          example: "SKU-SHIRT-001-L-RED"
+        size:
+          type: string
+          example: L
+        color:
+          type: string
+          example: RED
+        price:
+          type: number
+        status:
+          type: string
+          enum: [AVAILABLE, OUT_OF_STOCK, DISCONTINUED]

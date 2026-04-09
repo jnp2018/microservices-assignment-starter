@@ -1,38 +1,556 @@
 # ============================================
-# Service B — OpenAPI 3.0 Specification
+# Service B — Payment & Fulfillment API
+# Domain: Thương mại điện tử thời trang
+# Responsibility: Xử lý thanh toán (Payment Session + Callback),
+#                 Tạo vận đơn (Shipment), Gửi thông báo, Ghi audit
 # Docs: https://swagger.io/specification/
 # ============================================
 openapi: 3.0.3
 info:
-  title: Service B API
+  title: Service B — Payment & Fulfillment API
   description: |
-    API specification for Service B.
-    Replace with your actual service name and description.
+    API của Service B trong hệ thống thương mại điện tử thời trang.
+    Service B chịu trách nhiệm:
+    - **Payment**: Tạo phiên thanh toán và nhận callback kết quả từ payment provider
+    - **Shipment**: Tạo vận đơn giao hàng sau khi thanh toán thành công
+    - **Notification**: Gửi email/SMS xác nhận hoặc thông báo lỗi cho khách hàng
+    - **Audit**: Ghi nhật ký nghiệp vụ (thành công/thất bại) để truy vết giao dịch
+
+    Service B được Service A (Orchestrator) gọi đến và có thể callback ngược lại Service A
+    để thông báo kết quả thanh toán.
   version: 1.0.0
+  contact:
+    name: Fashion E-Commerce Team
 
 servers:
   - url: http://localhost:5002
-    description: Local development
+    description: Local development (direct)
+  - url: http://localhost:8080
+    description: Local development (via API Gateway)
+
+tags:
+  - name: Health
+    description: Kiểm tra trạng thái service
+  - name: Payments
+    description: Tạo và xử lý phiên thanh toán
+  - name: Shipments
+    description: Tạo và theo dõi vận đơn giao hàng
+  - name: Notifications
+    description: Gửi thông báo email/SMS
+  - name: Audit
+    description: Truy vết và ghi nhật ký nghiệp vụ
 
 paths:
   /health:
     get:
+      tags: [Health]
       summary: Health check
       operationId: healthCheck
       responses:
         '200':
-          description: Service is healthy
+          description: Service đang hoạt động bình thường
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: ok
+
+  # ── PAYMENTS ─────────────────────────────────────────────────────────────────
+  /payments/sessions:
+    post:
+      tags: [Payments]
+      summary: Tạo phiên thanh toán
+      description: |
+        Được Service A gọi sau khi đơn hàng được tạo thành công ở trạng thái `PENDING_PAYMENT`.
+        Service B tạo một payment session với payment provider và trả về URL/token thanh toán.
+        Kết quả thực tế được trả về qua endpoint `/payments/callback`.
+      operationId: createPaymentSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePaymentSessionRequest'
+            example:
+              orderId: "ord-uuid-0001"
+              customerId: "cust-001"
+              amount: 850000
+              currency: "VND"
+              paymentMethod: "CREDIT_CARD"
+              callbackUrl: "http://service-a:5001/internal/payment-callback"
+              description: "Thanh toán đơn hàng #ord-uuid-0001"
+      responses:
+        '201':
+          description: Phiên thanh toán được tạo thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentSession'
+              example:
+                paymentSessionId: "sess-xyz-9999"
+                orderId: "ord-uuid-0001"
+                paymentUrl: "https://payment-provider.example.com/pay/sess-xyz-9999"
+                expiresAt: "2026-04-09T13:00:00Z"
+                status: PENDING
+        '400':
+          description: Dữ liệu không hợp lệ (thiếu orderId, amount <= 0...)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "INVALID_PAYMENT_DATA"
+                message: "amount must be greater than 0"
+        '500':
+          description: Lỗi kết nối với payment provider
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "PAYMENT_PROVIDER_ERROR"
+                message: "Unable to connect to payment gateway"
+
+  /payments/callback:
+    post:
+      tags: [Payments]
+      summary: Nhận callback kết quả thanh toán từ payment provider
+      description: |
+        Endpoint này được payment provider gọi để thông báo kết quả giao dịch.
+        Sau khi nhận callback:
+        - **Thành công**: Service B cập nhật payment session và gọi lại Service A để cập nhật đơn hàng + tạo shipment.
+        - **Thất bại**: Service B thông báo Service A để rollback đơn hàng và hoàn tồn trả kho.
+      operationId: handlePaymentCallback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentCallbackRequest'
+            example:
+              paymentSessionId: "sess-xyz-9999"
+              orderId: "ord-uuid-0001"
+              transactionId: "txn-provider-111"
+              status: SUCCESS
+              paidAmount: 850000
+              paidAt: "2026-04-09T12:30:00Z"
+              signature: "hmac_sha256_signature_from_provider"
+      responses:
+        '200':
+          description: Callback được xử lý thành công
           content:
             application/json:
               schema:
                 type: object
                 properties:
+                  received:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Callback processed successfully"
+        '400':
+          description: Callback không hợp lệ (sai chữ ký, thiếu dữ liệu...)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "INVALID_CALLBACK"
+                message: "Signature verification failed"
+
+  /payments/sessions/{paymentSessionId}:
+    get:
+      tags: [Payments]
+      summary: Lấy trạng thái phiên thanh toán
+      operationId: getPaymentSession
+      parameters:
+        - name: paymentSessionId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "sess-xyz-9999"
+      responses:
+        '200':
+          description: Thông tin phiên thanh toán
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentSession'
+        '404':
+          description: Không tìm thấy phiên thanh toán
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ── SHIPMENTS ────────────────────────────────────────────────────────────────
+  /shipments:
+    post:
+      tags: [Shipments]
+      summary: Tạo yêu cầu giao hàng
+      description: |
+        Được Service A gọi sau khi thanh toán thành công.
+        Service B tạo một bản ghi vận đơn và chuẩn bị thông tin giao hàng.
+      operationId: createShipment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateShipmentRequest'
+            example:
+              orderId: "ord-uuid-0001"
+              customerId: "cust-001"
+              items:
+                - sku: "SKU-SHIRT-001-L-RED"
+                  productName: "Áo sơ mi đỏ size L"
+                  quantity: 2
+              shippingAddress:
+                fullName: "Nguyễn Văn A"
+                phone: "0912345678"
+                street: "123 Nguyễn Trãi"
+                district: "Thanh Xuân"
+                city: "Hà Nội"
+              deliveryNote: "Giao giờ hành chính"
+      responses:
+        '201':
+          description: Yêu cầu giao hàng được tạo thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Shipment'
+              example:
+                shipmentId: "ship-uuid-0001"
+                orderId: "ord-uuid-0001"
+                carrierStatus: CREATED
+                estimatedDelivery: "2026-04-12T18:00:00Z"
+                createdAt: "2026-04-09T12:31:00Z"
+        '400':
+          description: Dữ liệu giao hàng không hợp lệ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Không tìm thấy đơn hàng tương ứng
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "ORDER_NOT_FOUND"
+                message: "Order ord-uuid-0001 not found in shipment service"
+
+  /shipments/{shipmentId}:
+    get:
+      tags: [Shipments]
+      summary: Lấy thông tin và trạng thái vận đơn
+      operationId: getShipment
+      parameters:
+        - name: shipmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Thông tin vận đơn
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Shipment'
+        '404':
+          description: Không tìm thấy vận đơn
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ── NOTIFICATIONS ────────────────────────────────────────────────────────────
+  /notifications/send:
+    post:
+      tags: [Notifications]
+      summary: Gửi thông báo cho khách hàng
+      description: |
+        Được Service A (Orchestrator) gọi để gửi email/SMS xác nhận đơn hàng
+        hoặc thông báo khi thanh toán thất bại.
+      operationId: sendNotification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendNotificationRequest'
+            example:
+              customerId: "cust-001"
+              channel: EMAIL
+              template: ORDER_CONFIRMATION
+              templateData:
+                orderId: "ord-uuid-0001"
+                totalAmount: 850000
+                estimatedDelivery: "12/04/2026"
+      responses:
+        '200':
+          description: Thông báo đã được gửi hoặc đưa vào hàng đợi
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  notificationId:
+                    type: string
                   status:
                     type: string
-                    example: ok
+                    enum: [SENT, QUEUED, FAILED]
+        '400':
+          description: Template hoặc dữ liệu không hợp lệ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
-  # Define your endpoints here following the pattern above
+  # ── AUDIT ────────────────────────────────────────────────────────────────────
+  /audit/logs:
+    post:
+      tags: [Audit]
+      summary: Ghi nhật ký nghiệp vụ (audit log)
+      description: Được gọi nội bộ để lưu vết giao dịch thành công hoặc thất bại.
+      operationId: createAuditLog
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuditLogRequest'
+            example:
+              correlationId: "ord-uuid-0001"
+              action: "PLACE_ORDER"
+              result: SUCCESS
+              actorId: "cust-001"
+              details: "Order placed and payment confirmed"
+              timestamp: "2026-04-09T12:31:00Z"
+      responses:
+        '201':
+          description: Audit log đã được ghi
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  logId:
+                    type: string
+                  message:
+                    type: string
+                    example: "Audit log recorded"
+        '400':
+          description: Dữ liệu audit không hợp lệ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
+# ── COMPONENTS ─────────────────────────────────────────────────────────────────
 components:
-  schemas: {}
-    # Define your data models here
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+
+    ErrorResponse:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          example: "INTERNAL_SERVER_ERROR"
+        message:
+          type: string
+
+    ShippingAddress:
+      type: object
+      required: [fullName, phone, street, district, city]
+      properties:
+        fullName:
+          type: string
+        phone:
+          type: string
+        street:
+          type: string
+        district:
+          type: string
+        city:
+          type: string
+
+    CreatePaymentSessionRequest:
+      type: object
+      required: [orderId, customerId, amount, currency, paymentMethod, callbackUrl]
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        customerId:
+          type: string
+        amount:
+          type: number
+          minimum: 1
+        currency:
+          type: string
+          default: VND
+        paymentMethod:
+          type: string
+          enum: [CREDIT_CARD, DEBIT_CARD, E_WALLET, COD]
+        callbackUrl:
+          type: string
+          format: uri
+        description:
+          type: string
+
+    PaymentSession:
+      type: object
+      properties:
+        paymentSessionId:
+          type: string
+        orderId:
+          type: string
+          format: uuid
+        paymentUrl:
+          type: string
+          format: uri
+        status:
+          type: string
+          enum: [PENDING, SUCCESS, FAILED, EXPIRED]
+        amount:
+          type: number
+        transactionId:
+          type: string
+          description: ID giao dịch từ payment provider (có sau khi callback)
+        expiresAt:
+          type: string
+          format: date-time
+        paidAt:
+          type: string
+          format: date-time
+
+    PaymentCallbackRequest:
+      type: object
+      required: [paymentSessionId, orderId, status, signature]
+      properties:
+        paymentSessionId:
+          type: string
+        orderId:
+          type: string
+          format: uuid
+        transactionId:
+          type: string
+        status:
+          type: string
+          enum: [SUCCESS, FAILED, CANCELLED]
+        paidAmount:
+          type: number
+        paidAt:
+          type: string
+          format: date-time
+        signature:
+          type: string
+          description: HMAC chữ ký từ payment provider để xác minh tính toàn vẹn
+
+    ShipmentItem:
+      type: object
+      properties:
+        sku:
+          type: string
+        productName:
+          type: string
+        quantity:
+          type: integer
+
+    CreateShipmentRequest:
+      type: object
+      required: [orderId, customerId, items, shippingAddress]
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        customerId:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ShipmentItem'
+        shippingAddress:
+          $ref: '#/components/schemas/ShippingAddress'
+        deliveryNote:
+          type: string
+
+    Shipment:
+      type: object
+      properties:
+        shipmentId:
+          type: string
+          format: uuid
+        orderId:
+          type: string
+          format: uuid
+        carrierStatus:
+          type: string
+          enum: [CREATED, PICKED_UP, IN_TRANSIT, DELIVERED, FAILED]
+        trackingCode:
+          type: string
+        estimatedDelivery:
+          type: string
+          format: date-time
+        shippingAddress:
+          $ref: '#/components/schemas/ShippingAddress'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    SendNotificationRequest:
+      type: object
+      required: [customerId, channel, template, templateData]
+      properties:
+        customerId:
+          type: string
+        channel:
+          type: string
+          enum: [EMAIL, SMS, PUSH]
+        template:
+          type: string
+          enum: [ORDER_CONFIRMATION, PAYMENT_FAILED, SHIPMENT_CREATED, SHIPMENT_DELIVERED]
+        templateData:
+          type: object
+          description: Dữ liệu động điền vào template (orderId, amount, v.v.)
+          additionalProperties: true
+
+    AuditLogRequest:
+      type: object
+      required: [correlationId, action, result, timestamp]
+      properties:
+        correlationId:
+          type: string
+          description: ID dùng để liên kết các sự kiện (thường là orderId)
+        action:
+          type: string
+          enum: [PLACE_ORDER, CANCEL_ORDER, PROCESS_PAYMENT, CREATE_SHIPMENT]
+        result:
+          type: string
+          enum: [SUCCESS, FAILURE]
+        actorId:
+          type: string
+          description: ID của người dùng hoặc service thực hiện hành động
+        details:
+          type: string
+          description: Mô tả chi tiết về sự kiện
+        timestamp:
+          type: string
+          format: date-time
